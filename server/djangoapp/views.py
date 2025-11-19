@@ -5,6 +5,7 @@ from django.contrib.auth import logout, login, authenticate
 from django.views.decorators.csrf import csrf_exempt
 from .models import CarMake, CarModel
 from .populate import initiate
+from .restapis import get_request, analyze_review_sentiments, post_review   # <-- YE LINE ADD KI HAI
 import logging
 import json
 
@@ -95,54 +96,53 @@ def get_cars(request):
     return JsonResponse({"CarModels": cars})
 
 
-# -------------------------
-# PLACEHOLDER DEALERS / REVIEWS
-# -------------------------
-# You can replace these with Cloudant DB or actual dealer API calls
+# ======================== NEW PROXY VIEWS (LAB REQUIREMENT) ========================
 
-def get_dealerships(request):
-    # Sample data
-    dealers = [
-        {"id": 1, "full_name": "AutoWorld", "city": "New York", "state": "NY"},
-        {"id": 2, "full_name": "CarHub", "city": "Los Angeles", "state": "CA"},
-    ]
-    return JsonResponse({"dealers": dealers})
+# Get all dealerships OR by state
+def get_dealerships(request, state="All"):
+    if state == "All":
+        endpoint = "/fetchDealers"
+    else:
+        endpoint = "/fetchDealers/" + state
+    dealerships = get_request(endpoint)
+    return JsonResponse({"status": 200, "dealers": dealerships})
 
 
-def get_dealer_by_id(request, id):
-    dealer = {"id": id, "full_name": f"Dealer {id}", "city": "City", "state": "State"}
-    return JsonResponse({"dealer": dealer})
+# Get single dealer details by dealer_id
+def get_dealer_details(request, dealer_id):
+    if dealer_id:
+        endpoint = "/fetchDealer/" + str(dealer_id)
+        dealership = get_request(endpoint)
+        return JsonResponse({"status": 200, "dealer": dealership})
+    else:
+        return JsonResponse({"status": 400, "message": "Bad Request"})
 
 
-def get_dealerships_by_state(request, state):
-    dealers = [{"id": 1, "full_name": "AutoWorld", "city": "City", "state": state}]
-    return JsonResponse({"dealers": dealers})
+# Get reviews of a dealer + sentiment analysis
+def get_dealer_reviews(request, dealer_id):
+    if dealer_id:
+        endpoint = "/fetchReviews/dealer/" + str(dealer_id)
+        reviews = get_request(endpoint)
+        for review_detail in reviews:
+            sentiment_response = analyze_review_sentiments(review_detail['review'])
+            review_detail['sentiment'] = sentiment_response.get('sentiment', 'none')
+        return JsonResponse({"status": 200, "reviews": reviews})
+    else:
+        return JsonResponse({"status": 400, "message": "Bad Request"})
 
 
-@csrf_exempt
-def get_reviews(request, dealer_id):
-    reviews = [
-        {"dealer_id": dealer_id, "review": "Great service", "rating": 5},
-        {"dealer_id": dealer_id, "review": "Good experience", "rating": 4},
-    ]
-    return JsonResponse({"reviews": reviews})
-
-
+# Add a review (only authenticated users)
 @csrf_exempt
 def add_review(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": 403, "message": "Unauthorized"}, status=403)
+
     try:
         data = json.loads(request.body)
-        dealer_id = data.get("dealer_id")
-        review_text = data.get("review")
-        rating = data.get("rating", 5)
-    except Exception as e:
-        return JsonResponse({"error": "Invalid JSON input", "details": str(e)}, status=400)
+        response = post_review(data)
+        return JsonResponse({"status": 200, "message": "Review added successfully"})
+    except:
+        return JsonResponse({"status": 500, "message": "Error in posting review"})
 
-    # In real project, save to DB (Cloudant)
-    saved_review = {
-        "dealer_id": dealer_id,
-        "review": review_text,
-        "rating": rating,
-        "status": "Saved (placeholder)"
-    }
-    return JsonResponse(saved_review)
+
+# ===============================================================================
